@@ -1,35 +1,43 @@
 #include <stdlib.h>
 
-struct linalloc {
+typedef struct _linalloc {
 	void *start;
-	size_t offset;
-	size_t end;
-};
+	void *current;
+	void *end;
+} linalloc;
 
-struct linalloc *la_create(size_t size)
+linalloc *la_create(size_t size)
 {
-	struct linalloc *la = malloc(sizeof(struct linalloc));
+	if (!size)
+		return NULL;
+	linalloc *la = malloc(sizeof(linalloc));
+	if (!la)
+		return NULL;
 	la->start = malloc(size);
-	la->offset = 0;
-	la->end = size;
+	if (!la->start) {
+		free(la);
+		return NULL;
+	}
+	la->current = la->start;
+	la->end = la->start + size;
 	return la;
 }
 
-void *la_allocate(struct linalloc *la, size_t size)
+void *la_alloc(linalloc *la, size_t size)
 {
-	if (la->offset + size > la->end)
+	if (!size || la->current + size > la->end)
 		return NULL;
-	void *ret = la->free;
-	la->free += size;
+	void *ret = la->current;
+	la->current += size;
 	return ret;
 }
 
-void la_free(struct linalloc *la)
+void la_free(linalloc *la)
 {
-	la->offset = 0;
+	la->current = la->start;
 }
 
-void la_destroy(struct linalloc *la)
+void la_destroy(linalloc *la)
 {
 	free(la->start);
 	free(la);
