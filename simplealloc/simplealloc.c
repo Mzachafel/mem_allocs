@@ -1,8 +1,8 @@
 #include "simplealloc.h"
 
 // CHUNK % ALIGN == 0
-#define CHUNK 1024
-#define ALIGN 4
+#define CHUNK 4096
+#define ALIGN 8
 #define HEADER 4
 
 /* 
@@ -14,7 +14,9 @@ Header structure:
 */
 
 // Header macros
-#define HGET(x) *((unsigned int *) x) // Get whole block header
+#define HGET(x) *((unsigned int *) x) // Get block header
+#define HPUT(x,val) (*((unsigned int *) x) = val) // Put value in block header
+#define HADD(x,val) (*((unsigned int *) x) += val) // Add value to block header
 #define HISA(x) (*((unsigned int *) x) & 1) // Get 'a' bit value
 #define HSIZE(x) (*((unsigned int *) x) & -ALIGN) // Get size of block
 #define HNEXT(x) (x + HSIZE(x)) // Get pointer to next block header
@@ -26,15 +28,28 @@ Header structure:
 static int exists = 0;
 static void *heap = NULL;
 
-static int init(void)
+static int expand(void *ptr, unsigned int nbytes)
 {
-	if ((heap = sbrk(CHUNK)) == (void *) -1)
+	if (sbrk(nbytes) == (void *) -1)
 		return 0;
 		
-	HGET(heap) = CHUNK - ALIGN;
-	void *term = HNEXT(heap);
-	HGET(term) = 0;
+	HPUT(ptr,nbytes);
+	void *term = HNEXT(ptr);
+	HPUT(term,0);
 	HSETA(term);
+
+	return 1;
+}
+
+static int init(void)
+{
+	if ((heap = sbrk(HEADER)) == (void *) -1)
+		return 0;
+	HPUT(heap,0);
+	HSETA(heap);
+
+	if (!expand(heap, CHUNK))
+		return 0;
 
 	return exists = 1;
 }
@@ -46,21 +61,24 @@ static void *find(unsigned int nbytes)
 	for (prev = NULL, current = heap; HSIZE(current); prev = current, current += HSIZE(current))
 		if (!HISA(current)) {
 			while (!HISA(HNEXT(current)))
-				HGET(current) += HSIZE(HNEXT(current));
+				HADD(current,HSIZE(HNEXT(current)));
 			if (nbytes <= HSIZE(current))
 				return current;
 		}
 
 	// Syscall for more memory
-	if (sbrk(CHUNK) == (void *) -1)
+	if (!HISA(prev))
+		nbytes -= HSIZE(prev);
+	nbytes = CHUNK > nbytes ? CHUNK : nbytes;
+	if (!expand(current, nbytes))
 		return NULL;
-	HGET(current) = CHUNK;
-	void *term = HNEXT(current);
-	HGET(term) = 0;
-	HSETA(term);
-	HGET(prev) += HSIZE(current);
 
-	return prev;
+	if (!HISA(prev)) {
+		HADD(prev,HSIZE(current));
+		return prev;
+	} else {
+		return current;
+	}
 }
 
 static void place(void *current, unsigned int nbytes)
@@ -70,11 +88,12 @@ static void place(void *current, unsigned int nbytes)
 	void *next = current;
 	next += nbytes;
 
-	HGET(current) = nbytes;
+	HPUT(current,nbytes);
 	HSETA(current);
 
-	HGET(next) = memleft;
-	HUNSETA(next);
+	HPUT(next,memleft);
+	if (!HSIZE(next))
+		HSETA(next);
 }
 
 void *smp_malloc(unsigned int nbytes)
@@ -93,6 +112,8 @@ void *smp_malloc(unsigned int nbytes)
 	place(ptr, nbytes);
 	HSHPLD(ptr);
 
+	// printf("Allocated %d bytes\n", nbytes); DEBUG
+
 	return ptr;
 }
 
@@ -100,6 +121,8 @@ void smp_free(void *ptr)
 {
 	HSHHDR(ptr);
 	HUNSETA(ptr);
+
+	// printf("Freed %d bytes\n", HSIZE(ptr)); DEBUG
 }
 
 /* ----------DEBUG----------
@@ -125,6 +148,7 @@ static void printheap(void)
 int main()
 {
 	smp_malloc(0);
+	printf("Init\n");
 	printheap();
 	int *a = smp_malloc(2 * sizeof(int));
 	printheap();
@@ -134,12 +158,14 @@ int main()
 	printheap();
 	short *c = smp_malloc(2 * sizeof(short));
 	printheap();
-	int *d = smp_malloc(5 * sizeof(int));
+	int *d = smp_malloc(3 * sizeof(int));
 	printheap();
 	smp_free(c);
 	smp_free(b);
 	printheap();
 	int *e = smp_malloc(1 * sizeof(int));
+	printheap();
+	int *f = smp_malloc(20 * sizeof(int));
 	printheap();
 
 	return 0;
