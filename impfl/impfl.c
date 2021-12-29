@@ -1,4 +1,4 @@
-#include "simplealloc.h"
+#include <unistd.h>
 
 // CHUNK % ALIGN == 0
 #define CHUNK 4096
@@ -96,7 +96,7 @@ static void place(void *current, unsigned int nbytes)
 		HSETA(next);
 }
 
-void *smp_malloc(unsigned int nbytes)
+void *ifl_malloc(unsigned int nbytes)
 {
 	if (!exists && !init() || nbytes == 0)
 		return NULL;
@@ -117,7 +117,7 @@ void *smp_malloc(unsigned int nbytes)
 	return ptr;
 }
 
-void smp_free(void *ptr)
+void ifl_free(void *ptr)
 {
 	HSHHDR(ptr);
 	HUNSETA(ptr);
