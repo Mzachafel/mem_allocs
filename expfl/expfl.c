@@ -1,5 +1,5 @@
 #include <unistd.h>
-#include <stdio.h>
+//#include <stdio.h> //DEBUG
 
 // MINIMAL BLOCK SIZE
 // HEADER + PREV + NEXT + FOOTER
@@ -30,21 +30,21 @@ Block structure:
 
 		// Block macros
 	// Header
-#define HGET(x)   (*((unsigned long *)x))            // Get value
-#define HPUT(x,v) (HGET(x)=v)                        // Put value
-#define HISA(x)   (HGET(x)&1)       		     // Get 'a' bit value
-#define HSIZE(x)  (HGET(x)&-ALIGN)  		     // Get size of block
-#define HSETA(x)  (HGET(x)|=1)      		     // Set 'a' bit
-#define HCLRA(x)  (HGET(x)&=-ALIGN)                  // Clear 'a' bit
+#define HGET(x)   (*((unsigned long *)x))             // Get value
+#define HPUT(x,v) (HGET(x)=v)                         // Put value
+#define HISA(x)   (HGET(x)&1)       		      // Get 'a' bit value
+#define HSIZE(x)  (HGET(x)&-ALIGN)  		      // Get size of block
+#define HSETA(x)  (HGET(x)|=1)      		      // Set 'a' bit
+#define HCLRA(x)  (HGET(x)&=-ALIGN)                   // Clear 'a' bit
 	// Previous block
-#define PGET(x)   (*((void **)(x+SECTION)))  	     // Get value
-#define PPUT(x,v) (PGET(x)=v)                        // Put value
+#define PGET(x)   (*((void **)(x+SECTION)))  	      // Get value
+#define PPUT(x,v) (PGET(x)=v)                         // Put value
 	// Next block
-#define NGET(x)   (*((void **)(x+2*SECTION)))  	     // Get value
-#define NPUT(x,v) (NGET(x)=v)                        // Put value
+#define NGET(x)   (*((void **)(x+2*SECTION)))  	      // Get value
+#define NPUT(x,v) (NGET(x)=v)                         // Put value
 	// Footer
 // Forward usage
-#define FFGET(x)   (*((unsigned long *)(x+HSIZE(x)))) // Get value 
+#define FFGET(x)   (*((unsigned long *)(x+HSIZE(x)+SECTION))) // Get value 
 #define FFPUT(x,v) (FFGET(x)=v) 		      // Put value
 #define FFISA(x)   (FFGET(x)&1) 		      // Get 'a' bit value
 #define FFSIZE(x)  (FFGET(x)&-ALIGN) 		      // Get size of block
@@ -52,12 +52,11 @@ Block structure:
 #define FFCLRA(x)  (FFGET(x)&=-ALIGN) 		      // Clear 'a' bit
 // Backward Usage
 #define FBGET(x)   (*((unsigned long *)(x-SECTION)))
-#define FBPUT(x,v)
 #define FBISA(x)   (FBGET(x)&1)
 #define FBSIZE(x)  (FBGET(x)&-ALIGN)
 	// Actions
-#define NEXT(x) (x=x+HSIZE(x)+SECTION)                // Go to next block
-#define PREV(x) (x=x-FBSIZE(x)-SECTION)		      // Go to previous block
+#define NEXT(x) (x=x+HSIZE(x)+2*SECTION)                // Go to next block
+#define PREV(x) (x=x-FBSIZE(x)-2*SECTION)		      // Go to previous block
 #define TOPLD(x) (x=x+SECTION)			      // Shift pointer to payload
 #define TOHDR(x) (x=x-SECTION)			      // Shift pointer to header
 
@@ -79,7 +78,7 @@ static void cls(void *ptr)
 	if (next != NULL) PPUT(next,prev);
 
 	// get new size and set fl
-	size = HSIZE(ptr) + SECTION;
+	size = HSIZE(ptr) + 2*SECTION;
 	tmp = ptr;
 	PREV(ptr);
 	if (fl == tmp) fl = ptr;
@@ -161,6 +160,7 @@ static void *find(unsigned long nbytes)
 	// Syscall for more memory
 	if (!expand(nbytes))
 		return NULL;
+
 	return fl;
 }
 
@@ -172,9 +172,9 @@ static void place(void *ptr, unsigned long nbytes)
 	prev = PGET(ptr);
 	next = NGET(ptr);
 
-	memleft = HSIZE(ptr) - nbytes - SECTION;
+	memleft = HSIZE(ptr) - nbytes - 2*SECTION;
 
-	if (memleft < 2*SECTION) { // just use the whole block
+	if (memleft < 2*SECTION) { // if no memory for fl pointers use whole block
 		// this block is in free list so connect prev fb with next
 		if (prev != NULL) NPUT(prev,next);
 		if (next != NULL) PPUT(next,prev);
@@ -184,7 +184,7 @@ static void place(void *ptr, unsigned long nbytes)
 		// just set block to alloced
 		HSETA(ptr);
 		FFSETA(ptr);
-	} else { // separate new free block
+	} else { // else separate new free block
 		// set new size for this block (header and footer)
 		HPUT(ptr,nbytes);
 		HSETA(ptr);
@@ -224,8 +224,6 @@ void *efl_malloc(unsigned int nbytes)
 	place(ptr, nbytes);
 	TOPLD(ptr);
 
-	printf("Allocated %d bytes\n", nbytes); //DEBUG
-
 	return ptr;
 }
 
@@ -233,6 +231,7 @@ void efl_free(void *ptr)
 {
 	// switch to header
 	TOHDR(ptr);
+
 	// add to fl
 	HCLRA(ptr);
 	PPUT(ptr,NULL);
@@ -241,14 +240,11 @@ void efl_free(void *ptr)
 	FFCLRA(ptr);
 	fl = ptr;
 	
-	// coalesce
 	coalesce(fl);
-
-	//printf("Freed %d bytes\n", HSIZE(ptr)); DEBUG
 }
 
 /* ----------DEBUG---------- */
-
+/*
 static void printblock(void *ptr)
 {
 	if (!ptr) return;
@@ -263,12 +259,12 @@ static void printfreelist(void)
 		printblock(tmp);
 }
 
-static void printheap(void)
+void printheap(void)
 {
 	void *curr;
 	for (curr = begin; HSIZE(curr); NEXT(curr))
 		printf("%p=|%ld/%ld|%ld/%ld|\n", curr, HSIZE(curr), HISA(curr), FFSIZE(curr), FFISA(curr));
-	printf("%p=|%ld/%ld|\n", curr, HSIZE(curr), HISA(curr));
+	printf("%p=|%ld/%ld|\n", end, HSIZE(end), HISA(end));
 }
 
 static void datacheck(long *a, long *b)
@@ -281,12 +277,28 @@ static void datacheck(long *a, long *b)
 	printf("no data error\n");
 }
 
+#define S1 100
 int main()
 {
-	//init();
-	//printheap();
-	//printf("\n");
+	int i;
+	void **arr;
+
+	arr = efl_malloc(S1 * sizeof(void *));
+	for (i=0; i<S1; i++)
+		arr[i] = efl_malloc(sizeof(int));
+	for (i=0; i<S1; i++)
+		efl_free(arr[i]);
+	efl_free(arr);
 	
+	void **arr;
+	arr = efl_malloc(100000*sizeof(void*));
+	arr[1] = efl_malloc(sizeof(int));
+	printf("%p\n", begin);
+	printf("%p\n", arr);
+	printf("%p\n", &arr[1]);
+	printheap();
+	printf("\n");
+
 	// integrity test
 	long base[20] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
 	long *test = efl_malloc(20*sizeof(long));
@@ -314,5 +326,11 @@ int main()
 	printheap();
 	printf("\n");
 
+	arr = efl_malloc(100000*sizeof(void*));
+	printheap();
+	printf("\n");
+	
+
 	return 0;
 }
+*/
